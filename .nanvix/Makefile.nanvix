@@ -190,16 +190,16 @@ package: all
 	-cp -f $(SRC_DIR)/src/lxml/html/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html/ 2>/dev/null || true
 	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron/ 2>/dev/null || true
 	-cp -rf $(SRC_DIR)/src/lxml/includes/* dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes/ 2>/dev/null || true
-	tar -czf dist/$(ARTIFACT_NAME).tar.gz -C dist/$(ARTIFACT_NAME) sysroot
-	@echo "  Package: dist/$(ARTIFACT_NAME).tar.gz"
+	tar -cjf dist/$(ARTIFACT_NAME).tar.bz2 -C dist/$(ARTIFACT_NAME) sysroot
+	@echo "  Package: dist/$(ARTIFACT_NAME).tar.bz2"
 
 verify-package:
 	@echo "=== Verifying lxml package ==="
 	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
-	@test -f "dist/$(ARTIFACT_NAME).tar.gz" || { echo "FAIL: tarball not found"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "FAIL: missing liblxml_etree.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "FAIL: missing liblxml_elementpath.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/python-packages/lxml/' || { echo "FAIL: missing python-packages"; exit 1; }
+	@test -f "dist/$(ARTIFACT_NAME).tar.bz2" || { echo "FAIL: tarball not found"; exit 1; }
+	@tar tjf "dist/$(ARTIFACT_NAME).tar.bz2" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "FAIL: missing liblxml_etree.a"; exit 1; }
+	@tar tjf "dist/$(ARTIFACT_NAME).tar.bz2" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "FAIL: missing liblxml_elementpath.a"; exit 1; }
+	@tar tjf "dist/$(ARTIFACT_NAME).tar.bz2" | grep -q 'sysroot/python-packages/lxml/' || { echo "FAIL: missing python-packages"; exit 1; }
 	@echo "  PASS: lxml package verification"
 
 # ===========================================================================
