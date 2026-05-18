@@ -167,7 +167,32 @@ test-integration: test-smoke
 	@echo "  PASS: lxml integration tests"
 
 test-functional: test-integration
-	@echo "  PASS: lxml functional tests (library only, no runtime tests)"
+	@echo "=== lxml functional tests ==="
+ifeq ($(PROCESS_MODE),standalone)
+	@echo "  NOTE: Standalone functional tests are handled via ./z.sh."
+	@echo "  Delegating to: ./z.sh test test-functional"
+	@./z.sh test test-functional
+else
+ifdef CONFIG_NANVIX_DOCKER
+	@echo "  Running test_lxml$(EXE) via nanvixd.elf (Docker, platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
+	$(DOCKER_RUN) sh -c '\
+	  mkdir -p /tmp/nanvix-ramfs/tmp && \
+	  $(EFFECTIVE_SYSROOT)/bin/mkramfs.elf -o /tmp/rootfs.img /tmp/nanvix-ramfs/ && \
+	  timeout --foreground 120 $(EFFECTIVE_SYSROOT)/bin/nanvixd.elf \
+	    -bin-dir $(EFFECTIVE_SYSROOT)/bin -ramfs /tmp/rootfs.img \
+	    -- $(DOCKER_WORKSPACE_PATH)/test_lxml$(EXE)'
+	@echo "  PASS: test_lxml functional (Docker)"
+else
+	@echo "  Running test_lxml$(EXE) via nanvixd.elf (platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
+	@rm -rf /tmp/nanvix-ramfs && mkdir -p /tmp/nanvix-ramfs/tmp
+	"$(SYSROOT_PATH)/bin/mkramfs.elf" -o /tmp/rootfs.img /tmp/nanvix-ramfs/
+	cd "$(SYSROOT_PATH)" && timeout --foreground 120 ./bin/nanvixd.elf \
+	  -bin-dir ./bin -ramfs /tmp/rootfs.img \
+	  -- $(abspath test_lxml$(EXE))
+	@rm -rf /tmp/nanvix-ramfs /tmp/rootfs.img
+	@echo "  PASS: test_lxml functional"
+endif
+endif
 
 test: test-smoke test-integration test-functional
 	@echo "=== All lxml tests PASSED ==="
