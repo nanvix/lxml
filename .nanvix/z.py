@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from nanvix_zutil import CFG_SYSROOT, CFG_TOOLCHAIN, EXIT_MISSING_DEP, ZScript, log
+from nanvix_zutil import CFG_SYSROOT, TOOLCHAIN_CONTAINER_PATH, EXIT_MISSING_DEP, ZScript, log
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -44,9 +44,9 @@ class LxmlBuild(ZScript):
                 code=EXIT_MISSING_DEP,
                 hint="Run `./z setup` first to download the sysroot.",
             )
-        toolchain = self.config.get(CFG_TOOLCHAIN, "/opt/nanvix") or "/opt/nanvix"
+        toolchain = str(TOOLCHAIN_CONTAINER_PATH)
         sysroot_p = self.translate_path(Path(sysroot))
-        toolchain_p = self.translate_path(Path(toolchain))
+        toolchain_p = toolchain
 
         args = [
             "make",
