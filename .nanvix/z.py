@@ -16,7 +16,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from nanvix_zutil import CFG_SYSROOT, TOOLCHAIN_CONTAINER_PATH, EXIT_MISSING_DEP, ZScript, log
+from nanvix_zutil import (
+    CFG_SYSROOT,
+    TOOLCHAIN_CONTAINER_PATH,
+    EXIT_MISSING_DEP,
+    ZScript,
+    log,
+)
 
 IS_WINDOWS = sys.platform == "win32"
 
