@@ -1,198 +1,150 @@
-# Makefile.nanvix - lxml cross-compilation for Nanvix
-#
 # Copyright(c) The Maintainers of Nanvix.
 # Licensed under the MIT License.
+#
+# Usage: make -f .nanvix/Makefile.nanvix PLATFORM=<platform> PROCESS_MODE=<mode> \
+#    MEMORY_SIZE=<size> NANVIX_HOME=<home> NANVIX_TOOLCHAIN=<toolchain> [target]
+#
+# Targets:
+#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the integration test ELF
+#   test             Run all tests (smoke, integration, functional)
+#   test-smoke       Verify build artifacts (no runtime)
+#   test-integration Verify the test ELF was produced
+#   test-functional  Run the test ELF on nanvixd.elf
+#   package          Create a release tarball
+#   verify-package   Verify the contents of the release tarball
+#   clean            Remove build artifacts
 
 # ===========================================================================
-# Toolchain Detection
+# Global Variables
 # ===========================================================================
 
-NANVIX_DOCKER_IMAGE ?= ghcr.io/nanvix/toolchain-gcc
+# Some assumptions:
+# 1. This makefile is expected to be invoked via z.py.
+# 2. Build goals require the cross-toolchain at $(NANVIX_TOOLCHAIN); other
+#    goals (test-*, package, verify-package, clean) are pure host-side.
+# 3. Build ALWAYS runs before test and release.
+# 4. The buildroot (libxml2, libxslt, zlib, cpython headers) is laid down
+#    by `./z setup` at .nanvix/buildroot/ — its path is fixed, not
+#    overridable.
 
-ifdef CONFIG_NANVIX
-  NANVIX_TOOLCHAIN ?= /opt/nanvix
-  NANVIX_HOME ?= $(HOME)/nanvix
+.DEFAULT_GOAL=all
+EXE = .elf
 
-  ifndef CONFIG_NANVIX_DOCKER
-    ifeq ($(wildcard $(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc),)
-      DOCKER_AVAILABLE := $(shell command -v docker 2>/dev/null)
-      ifdef DOCKER_AVAILABLE
-        DOCKER_IMAGE_EXISTS := $(shell docker image inspect $(NANVIX_DOCKER_IMAGE) >/dev/null 2>&1 && echo yes)
-        ifndef DOCKER_IMAGE_EXISTS
-          $(info [nanvix] Pulling Docker image $(NANVIX_DOCKER_IMAGE)...)
-          DOCKER_IMAGE_EXISTS := $(shell docker pull -q $(NANVIX_DOCKER_IMAGE) >/dev/null 2>&1 && echo yes)
-        endif
-        ifdef DOCKER_IMAGE_EXISTS
-          CONFIG_NANVIX_DOCKER := y
-          $(info [nanvix] Using Docker (native toolchain not found at $(NANVIX_TOOLCHAIN)))
-        else
-          $(error Docker image $(NANVIX_DOCKER_IMAGE) not found and pull failed. Run: docker pull $(NANVIX_DOCKER_IMAGE))
-        endif
-      else
-        $(error Nanvix toolchain not found at $(NANVIX_TOOLCHAIN) and Docker not available)
-      endif
-    endif
-  else
-    DOCKER_AVAILABLE := $(shell command -v docker 2>/dev/null)
-    ifndef DOCKER_AVAILABLE
-      $(error CONFIG_NANVIX_DOCKER=y but Docker is not installed)
-    endif
-    DOCKER_IMAGE_EXISTS := $(shell docker image inspect $(NANVIX_DOCKER_IMAGE) >/dev/null 2>&1 && echo yes)
-    ifndef DOCKER_IMAGE_EXISTS
-      $(info [nanvix] Pulling Docker image $(NANVIX_DOCKER_IMAGE)...)
-      DOCKER_IMAGE_EXISTS := $(shell docker pull -q $(NANVIX_DOCKER_IMAGE) >/dev/null 2>&1 && echo yes)
-    endif
-    ifndef DOCKER_IMAGE_EXISTS
-      $(error Docker image $(NANVIX_DOCKER_IMAGE) not found and pull failed. Run: docker pull $(NANVIX_DOCKER_IMAGE))
-    endif
-    $(info [nanvix] Using Docker (explicitly requested))
-  endif
+SRC_DIR         := $(CURDIR)
+STATICLIB_ETREE       := dist/obj/liblxml_etree.a
+STATICLIB_ELEMENTPATH := dist/obj/liblxml_elementpath.a
+TEST_SRC        := .nanvix/test/test_lxml.c
+TEST_ELF        := test_lxml$(EXE)
 
-  EXE = .elf
-  SYSROOT_PATH := $(abspath $(NANVIX_HOME))
-  BUILDROOT_PATH := $(abspath $(CURDIR)/.nanvix/buildroot)
+_NANVIX_DOCKER_BUILD_GOALS := all $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
+_NANVIX_GOALS := $(or $(MAKECMDGOALS),$(.DEFAULT_GOAL))
 
-  ifdef CONFIG_NANVIX_DOCKER
-    DOCKER_TOOLCHAIN_PATH := /opt/nanvix
-    DOCKER_SYSROOT_PATH := /mnt/sysroot
-    DOCKER_BUILDROOT_PATH := /mnt/buildroot
-    DOCKER_WORKSPACE_PATH := /mnt/workspace
-    DOCKER_UID := $(shell id -u)
-    DOCKER_GID := $(shell id -g)
-    DOCKER_RUN := docker run --rm --user $(DOCKER_UID):$(DOCKER_GID) \
-      -v $(CURDIR):$(DOCKER_WORKSPACE_PATH) \
-      -v $(SYSROOT_PATH):$(DOCKER_SYSROOT_PATH):ro \
-      -v $(BUILDROOT_PATH):$(DOCKER_BUILDROOT_PATH):ro \
-      -w $(DOCKER_WORKSPACE_PATH) \
-      -e HOME=/tmp \
-      $(NANVIX_DOCKER_IMAGE)
-    EFFECTIVE_SYSROOT := $(DOCKER_SYSROOT_PATH)
-    EFFECTIVE_BUILDROOT := $(DOCKER_BUILDROOT_PATH)
-    EFFECTIVE_TOOLCHAIN := $(DOCKER_TOOLCHAIN_PATH)
-    EFFECTIVE_SRC_DIR := $(DOCKER_WORKSPACE_PATH)
-    RUN_CMD := $(DOCKER_RUN)
-  else
-    EFFECTIVE_SYSROOT := $(SYSROOT_PATH)
-    EFFECTIVE_BUILDROOT := $(BUILDROOT_PATH)
-    EFFECTIVE_TOOLCHAIN := $(NANVIX_TOOLCHAIN)
-    EFFECTIVE_SRC_DIR := $(CURDIR)
-    RUN_CMD :=
-  endif
-
-else
-  ifneq ($(MAKECMDGOALS),clean)
-    $(error CONFIG_NANVIX must be set to 'y')
-  endif
-  EXE = .elf
+# Ensure required variables are defined.
+_REQUIRED := PLATFORM PROCESS_MODE MEMORY_SIZE NANVIX_HOME NANVIX_TOOLCHAIN
+ifneq ($(filter-out clean,$(_NANVIX_GOALS)),)
+  $(foreach v,$(_REQUIRED),\
+    $(if $($v),,$(error Required variable $v not set))\
+  )
 endif
 
-PREFIX ?= $(SYSROOT_PATH)
-PLATFORM ?= unknown
-PROCESS_MODE ?= unknown
-MEMORY_SIZE ?= unknown
+SYSROOT_PATH   := $(abspath $(NANVIX_HOME))
+BUILDROOT_PATH := $(abspath $(CURDIR)/.nanvix/buildroot)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 
 # ===========================================================================
-# Project Settings
+# Build Mode Variables
 # ===========================================================================
 
-SRC_DIR := $(CURDIR)
-CPYTHON_HEADERS := $(SRC_DIR)/nanvix-port/cpython-headers
+_BUILD := $(filter $(_NANVIX_DOCKER_BUILD_GOALS),$(_NANVIX_GOALS))
+_NONBUILD := $(filter-out $(_NANVIX_DOCKER_BUILD_GOALS),$(_NANVIX_GOALS))
+ifneq ($(_BUILD),)
+  ifneq ($(_NONBUILD),)
+    $(error Cannot mix build and non-build targets. Build targets: $(_NANVIX_DOCKER_BUILD_GOALS))
+  endif
+
+  ifeq ($(wildcard $(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc),)
+    $(error Nanvix toolchain not found at $(NANVIX_TOOLCHAIN))
+  endif
+endif
 
 # ===========================================================================
 # Build Targets
 # ===========================================================================
 
-STATICLIB_ETREE = dist/obj/liblxml_etree.a
-STATICLIB_ELEMENTPATH = dist/obj/liblxml_elementpath.a
-
-all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH)
+all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
 
 $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
-	$(RUN_CMD) sh -c '\
-	  export PATH="$(EFFECTIVE_TOOLCHAIN)/bin:$$PATH" && \
+	sh -c '\
+	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
 	  mkdir -p dist/obj && \
 	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(EFFECTIVE_SRC_DIR)/nanvix-port/cpython-headers \
-	    -I$(EFFECTIVE_BUILDROOT)/include \
-	    -I$(EFFECTIVE_BUILDROOT)/include/libxml2 \
-	    -I$(EFFECTIVE_SYSROOT)/include \
-	    -I$(EFFECTIVE_SRC_DIR)/src \
-	    -I$(EFFECTIVE_SRC_DIR)/src/lxml/includes \
-	    -c $(EFFECTIVE_SRC_DIR)/src/lxml/etree.c -o dist/obj/lxml_etree.o && \
+	    -I$(SRC_DIR)/nanvix-port/cpython-headers \
+	    -I$(BUILDROOT_PATH)/include \
+	    -I$(BUILDROOT_PATH)/include/libxml2 \
+	    -I$(SYSROOT_PATH)/include \
+	    -I$(SRC_DIR)/src \
+	    -I$(SRC_DIR)/src/lxml/includes \
+	    -c $(SRC_DIR)/src/lxml/etree.c -o dist/obj/lxml_etree.o && \
 	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(EFFECTIVE_SRC_DIR)/nanvix-port/cpython-headers \
-	    -I$(EFFECTIVE_BUILDROOT)/include \
-	    -I$(EFFECTIVE_BUILDROOT)/include/libxml2 \
-	    -I$(EFFECTIVE_SYSROOT)/include \
-	    -I$(EFFECTIVE_SRC_DIR)/src \
-	    -I$(EFFECTIVE_SRC_DIR)/src/lxml/includes \
-	    -c $(EFFECTIVE_SRC_DIR)/src/lxml/_elementpath.c -o dist/obj/lxml_elementpath.o && \
+	    -I$(SRC_DIR)/nanvix-port/cpython-headers \
+	    -I$(BUILDROOT_PATH)/include \
+	    -I$(BUILDROOT_PATH)/include/libxml2 \
+	    -I$(SYSROOT_PATH)/include \
+	    -I$(SRC_DIR)/src \
+	    -I$(SRC_DIR)/src/lxml/includes \
+	    -c $(SRC_DIR)/src/lxml/_elementpath.c -o dist/obj/lxml_elementpath.o && \
 	  i686-nanvix-ar rcs dist/obj/liblxml_etree.a dist/obj/lxml_etree.o && \
 	  i686-nanvix-ar rcs dist/obj/liblxml_elementpath.a dist/obj/lxml_elementpath.o && \
 	  i686-nanvix-ranlib dist/obj/liblxml_etree.a && \
 	  i686-nanvix-ranlib dist/obj/liblxml_elementpath.a'
 
+$(TEST_ELF): $(TEST_SRC)
+	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
+	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
+	$(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc \
+	  -I$(BUILDROOT_PATH)/include/libxml2 \
+	  -I$(BUILDROOT_PATH)/include \
+	  -I$(SYSROOT_PATH)/include \
+	  $(TEST_SRC) \
+	  -L$(BUILDROOT_PATH)/lib -L$(SYSROOT_PATH)/lib \
+	  -T$(SYSROOT_PATH)/lib/user.ld -static -Wl,-z,noexecstack \
+	  -lxslt -lxml2 -lz \
+	  -Wl,--start-group \
+	  $(SYSROOT_PATH)/lib/libposix.a \
+	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a \
+	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a \
+	  -Wl,--end-group \
+	  -o $@
+
 # ===========================================================================
 # Test Targets
 # ===========================================================================
 
-test-smoke: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH)
+test-smoke:
 	@echo "=== lxml smoke tests ==="
-	@test -f dist/obj/liblxml_etree.a || { echo "FAIL: liblxml_etree.a not found"; exit 1; }
-	@test -f dist/obj/liblxml_elementpath.a || { echo "FAIL: liblxml_elementpath.a not found"; exit 1; }
+	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found"; exit 1; }
+	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found"; exit 1; }
 	@echo "  PASS: lxml smoke tests"
 
-TEST_PROG = test_lxml.elf
-
-test-integration: test-smoke
+test-integration:
 	@echo "=== lxml integration tests ==="
-	$(RUN_CMD) sh -c '\
-	  export PATH="$(EFFECTIVE_TOOLCHAIN)/bin:$$PATH" && \
-	  i686-nanvix-gcc \
-	    -I$(EFFECTIVE_BUILDROOT)/include/libxml2 \
-	    -I$(EFFECTIVE_BUILDROOT)/include \
-	    -I$(EFFECTIVE_SYSROOT)/include \
-	    .nanvix/test/test_lxml.c \
-	    -L$(EFFECTIVE_BUILDROOT)/lib -L$(EFFECTIVE_SYSROOT)/lib \
-	    -T$(EFFECTIVE_SYSROOT)/lib/user.ld -static -Wl,-z,noexecstack \
-	    -lxslt -lxml2 -lz \
-	    -Wl,--start-group \
-	    $(EFFECTIVE_SYSROOT)/lib/libposix.a \
-	    $(EFFECTIVE_TOOLCHAIN)/i686-nanvix/lib/libc.a \
-	    $(EFFECTIVE_TOOLCHAIN)/i686-nanvix/lib/libm.a \
-	    -Wl,--end-group \
-	    -o test_lxml.elf'
-	@echo "  OK: test_lxml.elf built"
+	@test -f $(TEST_ELF) || { echo "  FAIL: $(TEST_ELF) not built"; exit 1; }
+	@size=$$(wc -c < $(TEST_ELF)); \
+	  if [ "$$size" -lt 1000 ]; then echo "  FAIL: $(TEST_ELF) too small ($$size bytes)"; exit 1; fi; \
+	  echo "  OK: $(TEST_ELF) ($$size bytes)"
 	@echo "  PASS: lxml integration tests"
 
-test-functional: test-integration
+test-functional:
 	@echo "=== lxml functional tests ==="
-ifeq ($(PROCESS_MODE),standalone)
-	@echo "  NOTE: Standalone functional tests are handled via ./z.sh."
-	@echo "  Delegating to: ./z.sh test test-functional"
-	@./z.sh test test-functional
-else
-ifdef CONFIG_NANVIX_DOCKER
-	@echo "  Running test_lxml$(EXE) via nanvixd.elf (Docker, platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
-	$(DOCKER_RUN) sh -c '\
-	  mkdir -p /tmp/nanvix-ramfs/tmp && \
-	  $(EFFECTIVE_SYSROOT)/bin/mkramfs.elf -o /tmp/rootfs.img /tmp/nanvix-ramfs/ && \
-	  timeout --foreground 120 $(EFFECTIVE_SYSROOT)/bin/nanvixd.elf \
-	    -bin-dir $(EFFECTIVE_SYSROOT)/bin -ramfs /tmp/rootfs.img \
-	    -- $(DOCKER_WORKSPACE_PATH)/test_lxml$(EXE)'
-	@echo "  PASS: test_lxml functional (Docker)"
-else
-	@echo "  Running test_lxml$(EXE) via nanvixd.elf (platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
+	@test -f $(TEST_ELF) || { echo "  FAIL: $(TEST_ELF) not built"; exit 1; }
+	@echo "  Running $(TEST_ELF) via nanvixd.elf (platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
 	@rm -rf /tmp/nanvix-ramfs && mkdir -p /tmp/nanvix-ramfs/tmp
 	"$(SYSROOT_PATH)/bin/mkramfs.elf" -o /tmp/rootfs.img /tmp/nanvix-ramfs/
 	cd "$(SYSROOT_PATH)" && timeout --foreground 120 ./bin/nanvixd.elf \
 	  -bin-dir ./bin -ramfs /tmp/rootfs.img \
-	  -- $(abspath test_lxml$(EXE))
+	  -- $(abspath $(TEST_ELF))
 	@rm -rf /tmp/nanvix-ramfs /tmp/rootfs.img
-	@echo "  PASS: test_lxml functional"
-endif
-endif
+	@echo "  PASS: $(TEST_ELF) functional"
 
 test: test-smoke test-integration test-functional
 	@echo "=== All lxml tests PASSED ==="
@@ -201,16 +153,18 @@ test: test-smoke test-integration test-functional
 # Package Target
 # ===========================================================================
 
-package: all
+package:
 	@echo "=== Packaging lxml release ==="
 	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
+	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
+	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
 	rm -rf dist/$(ARTIFACT_NAME)
 	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
 	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html \
 	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron \
 	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes
-	cp -f dist/obj/liblxml_etree.a dist/$(ARTIFACT_NAME)/sysroot/lib/
-	cp -f dist/obj/liblxml_elementpath.a dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(STATICLIB_ETREE) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(STATICLIB_ELEMENTPATH) dist/$(ARTIFACT_NAME)/sysroot/lib/
 	cp -f $(SRC_DIR)/src/lxml/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/
 	-cp -f $(SRC_DIR)/src/lxml/html/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html/ 2>/dev/null || true
 	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron/ 2>/dev/null || true
@@ -221,24 +175,17 @@ package: all
 verify-package:
 	@echo "=== Verifying lxml package ==="
 	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
-	@test -f "dist/$(ARTIFACT_NAME).tar.gz" || { echo "FAIL: tarball not found"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "FAIL: missing liblxml_etree.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "FAIL: missing liblxml_elementpath.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/python-packages/lxml/' || { echo "FAIL: missing python-packages"; exit 1; }
+	@test -f "dist/$(ARTIFACT_NAME).tar.gz" || { echo "  FAIL: tarball not found"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "  FAIL: missing liblxml_etree.a"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "  FAIL: missing liblxml_elementpath.a"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/python-packages/lxml/' || { echo "  FAIL: missing python-packages"; exit 1; }
 	@echo "  PASS: lxml package verification"
 
 # ===========================================================================
-# Install / Clean
+# Clean
 # ===========================================================================
 
-install: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH)
-	mkdir -p "$(DESTDIR)$(PREFIX)/lib" \
-	         "$(DESTDIR)$(PREFIX)/python-packages/lxml"
-	install -m644 dist/obj/liblxml_etree.a "$(DESTDIR)$(PREFIX)/lib/"
-	install -m644 dist/obj/liblxml_elementpath.a "$(DESTDIR)$(PREFIX)/lib/"
-	cp -r $(SRC_DIR)/src/lxml/*.py "$(DESTDIR)$(PREFIX)/python-packages/lxml/"
-
 clean:
-	rm -rf dist/ test_lxml.elf
+	rm -rf dist/ $(TEST_ELF)
 
-.PHONY: all clean test test-smoke test-integration test-functional package verify-package install
+.PHONY: all clean test test-smoke test-integration test-functional package verify-package
