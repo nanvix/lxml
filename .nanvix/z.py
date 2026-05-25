@@ -26,7 +26,6 @@ from nanvix_zutil import (
 
 IS_WINDOWS = sys.platform == "win32"
 
-_MAKE_VAR_CONFIG = "CONFIG_NANVIX"
 _MAKE_VAR_HOME = "NANVIX_HOME"
 _MAKE_VAR_TOOLCHAIN = "NANVIX_TOOLCHAIN"
 _MAKE_VAR_PLATFORM = "PLATFORM"
@@ -50,15 +49,13 @@ class LxmlBuild(ZScript):
                 code=EXIT_MISSING_DEP,
                 hint="Run `./z setup` first to download the sysroot.",
             )
-        toolchain = str(TOOLCHAIN_CONTAINER_PATH)
+        toolchain_p = str(TOOLCHAIN_CONTAINER_PATH)
         sysroot_p = self.translate_path(Path(sysroot))
-        toolchain_p = toolchain
 
         args = [
             "make",
             "-f",
             ".nanvix/Makefile.nanvix",
-            f"{_MAKE_VAR_CONFIG}=y",
             f"{_MAKE_VAR_HOME}={sysroot_p}",
             f"{_MAKE_VAR_TOOLCHAIN}={toolchain_p}",
         ]
@@ -87,7 +84,7 @@ class LxmlBuild(ZScript):
 
     def build(self) -> None:
         """Cross-compile lxml C extensions for Nanvix."""
-        self.run(*self._make_args("all"), cwd=self.repo_root)
+        self.run(*self._make_args("all"), cwd=self.repo_root, docker=True)
 
     def test(self) -> None:
         """Run the lxml test suite.
@@ -115,12 +112,20 @@ class LxmlBuild(ZScript):
                 if "test" in targets:
                     make_targets = ["test-smoke", "test-integration"]
             if make_targets:
-                self.run(*self._make_args(*make_targets), cwd=self.repo_root)
+                self.run(
+                    *self._make_args(*make_targets),
+                    cwd=self.repo_root,
+                    docker=False,
+                )
             if needs_functional:
                 self._run_functional_standalone()
         else:
             targets = self.targets if self.targets else ["test"]
-            self.run(*self._make_args(*targets), cwd=self.repo_root)
+            self.run(
+                *self._make_args(*targets),
+                cwd=self.repo_root,
+                docker=False,
+            )
 
     def _run_functional_standalone(self) -> None:
         """Run standalone functional tests using make_initrd.
@@ -284,8 +289,8 @@ class LxmlBuild(ZScript):
 
     def release(self) -> None:
         """Package the lxml release tarball and verify it."""
-        self.run(*self._make_args("package"), cwd=self.repo_root)
-        self.run(*self._make_args("verify-package"), cwd=self.repo_root)
+        self.run(*self._make_args("package"), cwd=self.repo_root, docker=False)
+        self.run(*self._make_args("verify-package"), cwd=self.repo_root, docker=False)
 
     def clean(self) -> None:
         """Remove build artifacts."""
@@ -295,6 +300,7 @@ class LxmlBuild(ZScript):
             ".nanvix/Makefile.nanvix",
             "clean",
             cwd=self.repo_root,
+            docker=False,
         )
 
 
