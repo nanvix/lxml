@@ -60,3 +60,6 @@ src/lxml/etree_api.h
 src/lxml/lxml.etree.c
 src/lxml/lxml.etree.h
 src/lxml/lxml.etree_api.h
+
+# Nanvix
+test_lxml.elf
