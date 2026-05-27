@@ -35,6 +35,7 @@ jobs:
       memory-sizes: '["256mb"]'
       windows-matrix-exclude: '[]'
       skip-full-test-modes: '["multi-process","single-process","standalone"]'
+      standalone-test-args: 'test'
       caller-event-name: ${{ github.event_name }}
       windows-test: true
     secrets:
@@ -52,6 +53,7 @@ jobs:
       memory-sizes: '["256mb"]'
       windows-matrix-exclude: '[]'
       skip-full-test-modes: '["multi-process","single-process","standalone"]'
+      standalone-test-args: 'test'
       caller-event-name: 'schedule'
       windows-test: true
     secrets:
