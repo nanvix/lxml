@@ -11,7 +11,6 @@ Usage:
     ./z clean     # Remove build artifacts
 """
 
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +29,7 @@ IS_WINDOWS = sys.platform == "win32"
 
 _MAKE_VAR_HOME = "NANVIX_HOME"
 _MAKE_VAR_TOOLCHAIN = "NANVIX_TOOLCHAIN"
+_MAKE_VAR_BUILDROOT = "BUILDROOT_PATH"
 _MAKE_VAR_PLATFORM = "PLATFORM"
 _MAKE_VAR_PROCESS_MODE = "PROCESS_MODE"
 _MAKE_VAR_MEMORY_SIZE = "MEMORY_SIZE"
@@ -41,6 +41,22 @@ class LxmlBuild(ZScript):
     def docker_image(self) -> str:
         """Return the Docker image for cross-compilation."""
         return "ghcr.io/nanvix/toolchain-gcc"
+
+    def docker_config(self, image: str):
+        """Configure Docker with output files copied back to the workspace.
+
+        On Windows, the build runs in a container-local tmpfs (``/tmp/build``)
+        to avoid VirtioFS I/O penalties.  Declare the artifacts produced by
+        ``make all`` so they are copied back to the mounted workspace after
+        the inner command exits.
+        """
+        cfg = super().docker_config(image)
+        cfg.output_files = [
+            "dist/obj/liblxml_etree.a",
+            "dist/obj/liblxml_elementpath.a",
+            "test_lxml.elf",
+        ]
+        return cfg
 
     def _make_args(self, *targets: str) -> list[str]:
         """Build the common make argument list."""
@@ -55,6 +71,12 @@ class LxmlBuild(ZScript):
         sysroot_p = (
             self.docker.translate_path(Path(sysroot)) if self.docker else Path(sysroot)
         )
+        buildroot_host = self.repo_root / ".nanvix" / "buildroot"
+        buildroot_p = (
+            self.docker.translate_path(buildroot_host)
+            if self.docker
+            else buildroot_host
+        )
 
         args = [
             "make",
@@ -62,6 +84,7 @@ class LxmlBuild(ZScript):
             ".nanvix/Makefile.nanvix",
             f"{_MAKE_VAR_HOME}={sysroot_p}",
             f"{_MAKE_VAR_TOOLCHAIN}={toolchain_p}",
+            f"{_MAKE_VAR_BUILDROOT}={buildroot_p}",
         ]
 
         args.extend(
@@ -188,7 +211,7 @@ class LxmlBuild(ZScript):
     def _run_tests_windows(self) -> None:
         """Run tests natively on Windows via nanvixd.exe.
 
-        Uses make_initrd to bundle the binary with system daemons,
+        Uses make_initrd to bundle test_lxml.elf with system daemons,
         and a ramfs for test I/O files. Only standalone mode is
         supported on Windows.
         """
@@ -215,75 +238,52 @@ class LxmlBuild(ZScript):
                 hint="Run `./z setup` first.",
             )
 
-        test_allowlist = {"test_lxml.elf"}
-        test_binaries: list[Path] = []
-        for candidate in [self.repo_root, self.repo_root / "build"]:
-            if candidate.is_dir():
-                for elf in sorted(candidate.glob("*.elf")):
-                    if elf.name in test_allowlist and elf.name not in {
-                        x.name for x in test_binaries
-                    }:
-                        test_binaries.append(elf)
+        test_elf = self.repo_root / "test_lxml.elf"
+        if not test_elf.is_file():
+            log.fatal(
+                "test_lxml.elf not found.",
+                code=EXIT_MISSING_DEP,
+                hint="Run `./z build` first.",
+            )
 
-        if not test_binaries:
-            print("No test binaries found; skipping Windows tests.")
-            return
+        print("=== lxml functional tests ===")
+        print("  Running test_lxml.elf via nanvixd.exe standalone...")
 
-        failed: list[str] = []
-        for binary in test_binaries:
-            name = binary.stem
-            print(f"RUN  {name}...")
-            # Copy ELF to repo root if needed (make_initrd resolves relative to it).
-            repo_elf = self.repo_root / binary.name
-            copied_elf = False
-            initrd: Path | None = None
-            try:
-                if binary.resolve() != repo_elf.resolve():
-                    if repo_elf.exists():
-                        raise FileExistsError(
-                            f"refusing to clobber existing {repo_elf}"
-                        )
-                    shutil.copy2(binary, repo_elf)
-                    copied_elf = True
-                initrd = make_initrd(self, binary.name)
-                with tempfile.TemporaryDirectory(prefix=f"nanvix_{name}_") as tmpdir:
-                    tmpdir_path = Path(tmpdir)
-                    ramfs_dir = tmpdir_path / "ramfs"
-                    ramfs_dir.mkdir()
-                    (ramfs_dir / "tmp").mkdir(exist_ok=True)
-                    ramfs_img = tmpdir_path / f"rootfs_{name}.img"
+        initrd = make_initrd(self, "test_lxml.elf")
 
-                    run(
-                        str(mkramfs),
-                        "-o",
-                        str(ramfs_img),
-                        str(ramfs_dir),
-                        timeout=60,
-                    )
+        try:
+            with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                ramfs_dir = tmpdir_path / "ramfs"
+                ramfs_dir.mkdir()
+                (ramfs_dir / "tmp").mkdir(exist_ok=True)
+                ramfs_img = tmpdir_path / "rootfs.img"
 
-                    run(
-                        str(nanvixd),
-                        "-bin-dir",
-                        str(sysroot_path / "bin"),
-                        "-ramfs",
-                        str(ramfs_img),
-                        "--",
-                        str(initrd),
-                        timeout=120,
-                    )
-                print(f"OK   {name}")
-            except (SystemExit, FileExistsError) as e:
-                print(f"FAIL {name} ({e})")
-                failed.append(name)
-            finally:
-                if initrd is not None and initrd.exists():
-                    initrd.unlink()
-                if copied_elf and repo_elf.exists():
-                    repo_elf.unlink()
+                run(
+                    str(mkramfs),
+                    "-o",
+                    str(ramfs_img),
+                    str(ramfs_dir),
+                    timeout=60,
+                )
 
-        if failed:
-            raise RuntimeError(f"{len(failed)} test(s) failed: {' '.join(failed)}")
-        print(f"\t\t*** All {len(test_binaries)} tests PASSED ***")
+                run(
+                    str(nanvixd),
+                    "-bin-dir",
+                    str(sysroot_path / "bin"),
+                    "-ramfs",
+                    str(ramfs_img),
+                    "--",
+                    str(initrd),
+                    timeout=120,
+                )
+        finally:
+            if initrd.exists():
+                initrd.unlink()
+
+        print("  PASS: test_lxml standalone")
+        print("  PASS: lxml functional tests")
+        print("=== All lxml tests PASSED ===")
 
     def release(self) -> None:
         """Package the lxml release tarball and verify it."""
