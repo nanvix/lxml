@@ -78,7 +78,7 @@ $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
 	  mkdir -p dist/obj && \
 	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(SRC_DIR)/nanvix-port/cpython-headers \
+	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
 	    -I$(BUILDROOT_PATH)/include \
 	    -I$(BUILDROOT_PATH)/include/libxml2 \
 	    -I$(SYSROOT_PATH)/include \
@@ -86,7 +86,7 @@ $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	    -I$(SRC_DIR)/src/lxml/includes \
 	    -c $(SRC_DIR)/src/lxml/etree.c -o dist/obj/lxml_etree.o && \
 	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(SRC_DIR)/nanvix-port/cpython-headers \
+	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
 	    -I$(BUILDROOT_PATH)/include \
 	    -I$(BUILDROOT_PATH)/include/libxml2 \
 	    -I$(SYSROOT_PATH)/include \
