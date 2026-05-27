@@ -6,7 +6,7 @@
 Usage:
     ./z setup     # Download Nanvix sysroot
     ./z build     # Cross-compile lxml C extensions
-    ./z test      # Run test suite (smoke)
+    ./z test      # Run functional test suite
     ./z release   # Package release tarball
     ./z clean     # Remove build artifacts
 """
@@ -116,35 +116,17 @@ class LxmlBuild(ZScript):
     def test(self) -> None:
         """Run the lxml test suite.
 
-        Smoke and integration tests are always delegated to the Makefile.
-        The functional test in standalone mode is handled in Python via
-        make_initrd so that initrd creation is shared across platforms.
+        Only functional tests are supported; they cover all test cases.
+        In standalone mode (Linux or Windows), the test is run in Python
+        via make_initrd so initrd creation is shared across platforms.
+        Other deployment modes are delegated to the Makefile.
         """
         if IS_WINDOWS:
             self._run_tests_windows()
             return
 
         if self.config.deployment_mode == "standalone":
-            targets = self.targets if self.targets else []
-            _functional_targets = {"test", "test-functional"}
-            needs_functional = not targets or bool(set(targets) & _functional_targets)
-            make_targets = [t for t in targets if t not in _functional_targets]
-            if not targets:
-                make_targets = ["test-smoke", "test-integration"]
-            elif needs_functional and not make_targets:
-                # When only "test" is requested, run full prerequisites.
-                # When only "test-functional" is requested, skip Makefile
-                # targets since they already ran as Makefile dependencies
-                # (avoids double execution when invoked via `make test`).
-                if "test" in targets:
-                    make_targets = ["test-smoke", "test-integration"]
-            if make_targets:
-                run(
-                    *self._make_args(*make_targets),
-                    cwd=self.repo_root,
-                )
-            if needs_functional:
-                self._run_functional_standalone()
+            self._run_functional_standalone()
         else:
             targets = self.targets if self.targets else ["test"]
             run(

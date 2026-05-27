@@ -5,11 +5,8 @@
 #    MEMORY_SIZE=<size> NANVIX_HOME=<home> NANVIX_TOOLCHAIN=<toolchain> [target]
 #
 # Targets:
-#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the integration test ELF
-#   test             Run all tests (smoke, integration, functional)
-#   test-smoke       Verify build artifacts (no runtime)
-#   test-integration Verify the test ELF was produced
-#   test-functional  Run the test ELF on nanvixd.elf
+#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the functional test ELF
+#   test             Run the functional test ELF on nanvixd.elf
 #   package          Create a release tarball
 #   verify-package   Verify the contents of the release tarball
 #   clean            Remove build artifacts
@@ -120,21 +117,7 @@ $(TEST_ELF): $(TEST_SRC)
 # Test Targets
 # ===========================================================================
 
-test-smoke:
-	@echo "=== lxml smoke tests ==="
-	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found"; exit 1; }
-	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found"; exit 1; }
-	@echo "  PASS: lxml smoke tests"
-
-test-integration:
-	@echo "=== lxml integration tests ==="
-	@test -f $(TEST_ELF) || { echo "  FAIL: $(TEST_ELF) not built"; exit 1; }
-	@size=$$(wc -c < $(TEST_ELF)); \
-	  if [ "$$size" -lt 1000 ]; then echo "  FAIL: $(TEST_ELF) too small ($$size bytes)"; exit 1; fi; \
-	  echo "  OK: $(TEST_ELF) ($$size bytes)"
-	@echo "  PASS: lxml integration tests"
-
-test-functional:
+test:
 	@echo "=== lxml functional tests ==="
 	@test -f $(TEST_ELF) || { echo "  FAIL: $(TEST_ELF) not built"; exit 1; }
 	@echo "  Running $(TEST_ELF) via nanvixd.elf (platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
@@ -145,9 +128,6 @@ test-functional:
 	  -- $(abspath $(TEST_ELF))
 	@rm -rf /tmp/nanvix-ramfs /tmp/rootfs.img
 	@echo "  PASS: $(TEST_ELF) functional"
-
-test: test-smoke test-integration test-functional
-	@echo "=== All lxml tests PASSED ==="
 
 # ===========================================================================
 # Package Target
@@ -188,4 +168,4 @@ verify-package:
 clean:
 	rm -rf dist/ $(TEST_ELF)
 
-.PHONY: all clean test test-smoke test-integration test-functional package verify-package
+.PHONY: all clean test package verify-package
