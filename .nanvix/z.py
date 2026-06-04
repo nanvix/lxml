@@ -5,7 +5,7 @@
 
 Usage:
     ./z setup     # Download Nanvix sysroot
-    ./z build     # Cross-compile lxml C extensions
+    ./z build     # Cross-compile lxml C extensions (.a + .so)
     ./z test      # Run functional test suite
     ./z release   # Package release tarball
     ./z clean     # Remove build artifacts
@@ -79,7 +79,9 @@ class LxmlBuild(ZScript):
         python_out = out_dir() / "release" / "python-packages"
         return [
             str((lib_out() / "liblxml_etree.a").relative_to(root)),
+        str((lib_out() / "liblxml_etree.so").relative_to(root)),
             str((lib_out() / "liblxml_elementpath.a").relative_to(root)),
+        str((lib_out() / "liblxml_elementpath.so").relative_to(root)),
             str((test_out() / "test_lxml.elf").relative_to(root)),
             # Python sources are globbed by the install rule; list the
             # top-level marker so tar-copy round-trips the whole subtree.
@@ -143,7 +145,7 @@ class LxmlBuild(ZScript):
         return sysroot
 
     def build(self) -> None:
-        """Cross-compile lxml C extensions for Nanvix."""
+        """Cross-compile lxml C extensions (.a + .so) for Nanvix."""
         run(*self._make_args("all"), cwd=repo_root(), docker=self.docker)
 
     def test(self) -> None:

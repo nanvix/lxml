@@ -5,10 +5,22 @@
 #    MEMORY_SIZE=<size> NANVIX_HOME=<home> NANVIX_TOOLCHAIN=<toolchain> [target]
 #
 # Targets:
-#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the functional test ELF, then stage via install
-#   install          Stage built artifacts into LIB_OUT/TEST_OUT and Python sources into PYTHON_OUT
+#   all              Build liblxml_etree.{a,so}, liblxml_elementpath.{a,so}, and the functional test ELF
 #   test             Run the functional test ELF on nanvixd.elf
+#   package          Create a release tarball
+#   verify-package   Verify the contents of the release tarball
 #   clean            Remove build artifacts
+#
+# Dependencies:
+#   The shared-library build requires:
+#   * The Nanvix dynamic loader to honour `.init_array` constructors and
+#     DT_NEEDED resolution chains (esaurez/nanvix#27).
+#   * `libxml2.so`, `libxslt.so`, and `libexslt.so` to be present in the
+#     buildroot, shipped by the companion releases of esaurez/libxml2 and
+#     esaurez/libxslt.
+#   liblxml_etree.so is linked with DT_NEEDED libxslt.so libexslt.so
+#   libxml2.so so the loader pulls the lower-level libraries
+#   automatically at dlopen time, eliminating per-module duplication.
 
 # ===========================================================================
 # Global Variables
@@ -16,8 +28,8 @@
 
 # Some assumptions:
 # 1. This makefile is expected to be invoked via z.py.
-# 2. Build goals (all, install) require the cross-toolchain at
-#    $(NANVIX_TOOLCHAIN); other goals (test-*, clean) are pure host-side.
+# 2. Build goals require the cross-toolchain at $(NANVIX_TOOLCHAIN); other
+#    goals (test-*, package, verify-package, clean) are pure host-side.
 # 3. Build ALWAYS runs before test and release.
 # 4. The buildroot (libxml2, libxslt, zlib, cpython headers) is laid down
 #    by `./z setup` at .nanvix/buildroot/ — its path is fixed, not
@@ -29,24 +41,16 @@ EXE = .elf
 SRC_DIR         := $(CURDIR)
 STATICLIB_ETREE       := dist/obj/liblxml_etree.a
 STATICLIB_ELEMENTPATH := dist/obj/liblxml_elementpath.a
+SHAREDLIB_ETREE       := dist/obj/liblxml_etree.so
+SHAREDLIB_ELEMENTPATH := dist/obj/liblxml_elementpath.so
 TEST_SRC        := .nanvix/test/test_lxml.c
 TEST_ELF        := test_lxml$(EXE)
 
-_NANVIX_DOCKER_BUILD_GOALS := all install $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
+_NANVIX_DOCKER_BUILD_GOALS := all $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(SHAREDLIB_ETREE) $(SHAREDLIB_ELEMENTPATH) $(TEST_ELF)
 _NANVIX_GOALS := $(or $(MAKECMDGOALS),$(.DEFAULT_GOAL))
 
 # Ensure required variables are defined.
-_REQUIRED := PLATFORM \
-    PROCESS_MODE \
-    MEMORY_SIZE \
-    NANVIX_HOME \
-    NANVIX_TOOLCHAIN \
-    NANVIX_ROOT \
-    OUT_DIR \
-    DIST_DIR \
-    LIB_OUT \
-    INCLUDE_OUT \
-    TEST_OUT
+_REQUIRED := PLATFORM PROCESS_MODE MEMORY_SIZE NANVIX_HOME NANVIX_TOOLCHAIN
 ifneq ($(filter-out clean,$(_NANVIX_GOALS)),)
   $(foreach v,$(_REQUIRED),\
     $(if $($v),,$(error Required variable $v not set))\
@@ -56,10 +60,6 @@ endif
 SYSROOT_PATH   := $(abspath $(NANVIX_HOME))
 BUILDROOT_PATH := $(abspath $(CURDIR)/.nanvix/buildroot)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
-
-# Python source tree is staged alongside lib/include under the release dir
-# so that `./z release` packages it via the inherited ZScript.release().
-PYTHON_OUT := $(OUT_DIR)/release/python-packages
 
 # ===========================================================================
 # Build Mode Variables
@@ -81,13 +81,17 @@ endif
 # Build Targets
 # ===========================================================================
 
-all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF) install
+all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(SHAREDLIB_ETREE) $(SHAREDLIB_ELEMENTPATH) $(TEST_ELF)
 
+# Compile the Cython-generated C sources with -fPIC so they can be
+# linked into both the static .a (preserved for downstream consumers
+# that still bundle lxml statically) and the new position-independent
+# .so files below.
 $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	sh -c '\
 	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
 	  mkdir -p dist/obj && \
-	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
+	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fPIC -fdata-sections -ffunction-sections \
 	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
 	    -I$(BUILDROOT_PATH)/include \
 	    -I$(BUILDROOT_PATH)/include/libxml2 \
@@ -95,7 +99,7 @@ $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	    -I$(SRC_DIR)/src \
 	    -I$(SRC_DIR)/src/lxml/includes \
 	    -c $(SRC_DIR)/src/lxml/etree.c -o dist/obj/lxml_etree.o && \
-	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
+	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fPIC -fdata-sections -ffunction-sections \
 	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
 	    -I$(BUILDROOT_PATH)/include \
 	    -I$(BUILDROOT_PATH)/include/libxml2 \
@@ -107,6 +111,37 @@ $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	  i686-nanvix-ar rcs dist/obj/liblxml_elementpath.a dist/obj/lxml_elementpath.o && \
 	  i686-nanvix-ranlib dist/obj/liblxml_etree.a && \
 	  i686-nanvix-ranlib dist/obj/liblxml_elementpath.a'
+
+# liblxml_etree.so: links against libxslt.so + libexslt.so +
+# libxml2.so (DT_NEEDED entries), with only the cython-generated
+# lxml.etree.c embedded.  libxslt, libexslt, libxml2, and libz live
+# in their own .so files and are pulled in transitively by the
+# loader at dlopen time, eliminating the multi-megabyte duplication
+# that a self-contained build would cause.  Python C API symbols
+# (PyType_Type, PyExc_*, ...) and libc/libm/libposix entry points
+# stay unresolved and bind against the host executable's .dynsym
+# at dlopen time.
+$(SHAREDLIB_ETREE): $(STATICLIB_ETREE)
+	sh -c '\
+	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
+	  i686-nanvix-gcc -shared -fPIC -nostdlib \
+	    -Wl,-soname,liblxml_etree.so -Wl,-z,noexecstack \
+	    -L$(BUILDROOT_PATH)/lib \
+	    -Wl,--whole-archive $(STATICLIB_ETREE) -Wl,--no-whole-archive \
+	    -lxslt -lexslt -lxml2 \
+	    -o $(SHAREDLIB_ETREE)'
+
+# liblxml_elementpath.so: pure-Cython module with no native deps
+# beyond CPython itself, so no DT_NEEDED entries.
+$(SHAREDLIB_ELEMENTPATH): $(STATICLIB_ELEMENTPATH)
+	sh -c '\
+	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
+	  i686-nanvix-gcc -shared -fPIC -nostdlib \
+	    -Wl,-soname,liblxml_elementpath.so -Wl,-z,noexecstack \
+	    -Wl,--whole-archive \
+	      $(STATICLIB_ELEMENTPATH) \
+	    -Wl,--no-whole-archive \
+	    -o $(SHAREDLIB_ELEMENTPATH)'
 
 $(TEST_ELF): $(TEST_SRC)
 	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
@@ -129,23 +164,6 @@ $(TEST_ELF): $(TEST_SRC)
 	  -o $@
 
 # ===========================================================================
-# Install (stage artifacts into release/test output tree)
-# ===========================================================================
-
-install: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
-	@mkdir -p $(LIB_OUT) $(TEST_OUT) \
-	          $(PYTHON_OUT)/lxml/html \
-	          $(PYTHON_OUT)/lxml/isoschematron \
-	          $(PYTHON_OUT)/lxml/includes
-	cp -f $(STATICLIB_ETREE)       $(LIB_OUT)/
-	cp -f $(STATICLIB_ELEMENTPATH) $(LIB_OUT)/
-	cp -f $(TEST_ELF)              $(TEST_OUT)/
-	cp -f $(SRC_DIR)/src/lxml/*.py $(PYTHON_OUT)/lxml/
-	-cp -f $(SRC_DIR)/src/lxml/html/*.py          $(PYTHON_OUT)/lxml/html/          2>/dev/null || true
-	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py $(PYTHON_OUT)/lxml/isoschematron/ 2>/dev/null || true
-	-cp -rf $(SRC_DIR)/src/lxml/includes/*        $(PYTHON_OUT)/lxml/includes/      2>/dev/null || true
-
-# ===========================================================================
 # Test Targets
 # ===========================================================================
 
@@ -162,10 +180,48 @@ test:
 	@echo "  PASS: $(TEST_ELF) functional"
 
 # ===========================================================================
+# Package Target
+# ===========================================================================
+
+package:
+	@echo "=== Packaging lxml release ==="
+	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
+	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
+	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
+	@test -f $(SHAREDLIB_ETREE) || { echo "  FAIL: $(SHAREDLIB_ETREE) not found; run 'build' first"; exit 1; }
+	@test -f $(SHAREDLIB_ELEMENTPATH) || { echo "  FAIL: $(SHAREDLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
+	rm -rf dist/$(ARTIFACT_NAME)
+	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
+	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html \
+	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron \
+	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes
+	cp -f $(STATICLIB_ETREE) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(STATICLIB_ELEMENTPATH) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(SHAREDLIB_ETREE) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(SHAREDLIB_ELEMENTPATH) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f $(SRC_DIR)/src/lxml/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/
+	-cp -f $(SRC_DIR)/src/lxml/html/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html/ 2>/dev/null || true
+	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron/ 2>/dev/null || true
+	-cp -rf $(SRC_DIR)/src/lxml/includes/* dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes/ 2>/dev/null || true
+	tar -czf dist/$(ARTIFACT_NAME).tar.gz -C dist/$(ARTIFACT_NAME) sysroot
+	@echo "  Package: dist/$(ARTIFACT_NAME).tar.gz"
+
+verify-package:
+	@echo "=== Verifying lxml package ==="
+	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
+	@test -f "dist/$(ARTIFACT_NAME).tar.gz" || { echo "  FAIL: tarball not found"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "  FAIL: missing liblxml_etree.a"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "  FAIL: missing liblxml_elementpath.a"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.so' || { echo "  FAIL: missing liblxml_etree.so"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.so' || { echo "  FAIL: missing liblxml_elementpath.so"; exit 1; }
+	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/python-packages/lxml/' || { echo "  FAIL: missing python-packages"; exit 1; }
+	@echo "  PASS: lxml package verification"
+
+# ===========================================================================
 # Clean
 # ===========================================================================
 
 clean:
-	rm -rf $(OUT_DIR) dist/ $(TEST_ELF)
+	rm -rf dist/ $(TEST_ELF)
 
-.PHONY: all install clean test
+.PHONY: all clean test package verify-package
