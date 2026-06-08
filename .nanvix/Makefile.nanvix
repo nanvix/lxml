@@ -153,7 +153,6 @@ $(TEST_ELF): $(TEST_SRC)
 	  -L$(BUILDROOT_PATH)/lib -L$(SYSROOT_PATH)/lib \
 	  -T$(SYSROOT_PATH)/lib/user.ld -static -Wl,-z,noexecstack \
 	  -lxslt -lxml2 -lz \
-	  -Wl,--allow-multiple-definition \
 	  -Wl,--start-group \
 	  $(wildcard $(SYSROOT_PATH)/lib/libnvx_crt0.a) \
 	  $(SYSROOT_PATH)/lib/libposix.a \
