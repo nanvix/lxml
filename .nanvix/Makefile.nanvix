@@ -5,10 +5,9 @@
 #    MEMORY_SIZE=<size> NANVIX_HOME=<home> NANVIX_TOOLCHAIN=<toolchain> [target]
 #
 # Targets:
-#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the functional test ELF
+#   all              Build liblxml_etree.a, liblxml_elementpath.a, and the functional test ELF, then stage via install
+#   install          Stage built artifacts into LIB_OUT/TEST_OUT and Python sources into PYTHON_OUT
 #   test             Run the functional test ELF on nanvixd.elf
-#   package          Create a release tarball
-#   verify-package   Verify the contents of the release tarball
 #   clean            Remove build artifacts
 
 # ===========================================================================
@@ -17,8 +16,8 @@
 
 # Some assumptions:
 # 1. This makefile is expected to be invoked via z.py.
-# 2. Build goals require the cross-toolchain at $(NANVIX_TOOLCHAIN); other
-#    goals (test-*, package, verify-package, clean) are pure host-side.
+# 2. Build goals (all, install) require the cross-toolchain at
+#    $(NANVIX_TOOLCHAIN); other goals (test-*, clean) are pure host-side.
 # 3. Build ALWAYS runs before test and release.
 # 4. The buildroot (libxml2, libxslt, zlib, cpython headers) is laid down
 #    by `./z setup` at .nanvix/buildroot/ — its path is fixed, not
@@ -33,11 +32,21 @@ STATICLIB_ELEMENTPATH := dist/obj/liblxml_elementpath.a
 TEST_SRC        := .nanvix/test/test_lxml.c
 TEST_ELF        := test_lxml$(EXE)
 
-_NANVIX_DOCKER_BUILD_GOALS := all $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
+_NANVIX_DOCKER_BUILD_GOALS := all install $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
 _NANVIX_GOALS := $(or $(MAKECMDGOALS),$(.DEFAULT_GOAL))
 
 # Ensure required variables are defined.
-_REQUIRED := PLATFORM PROCESS_MODE MEMORY_SIZE NANVIX_HOME NANVIX_TOOLCHAIN
+_REQUIRED := PLATFORM \
+    PROCESS_MODE \
+    MEMORY_SIZE \
+    NANVIX_HOME \
+    NANVIX_TOOLCHAIN \
+    NANVIX_ROOT \
+    OUT_DIR \
+    DIST_DIR \
+    LIB_OUT \
+    INCLUDE_OUT \
+    TEST_OUT
 ifneq ($(filter-out clean,$(_NANVIX_GOALS)),)
   $(foreach v,$(_REQUIRED),\
     $(if $($v),,$(error Required variable $v not set))\
@@ -47,6 +56,10 @@ endif
 SYSROOT_PATH   := $(abspath $(NANVIX_HOME))
 BUILDROOT_PATH := $(abspath $(CURDIR)/.nanvix/buildroot)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
+
+# Python source tree is staged alongside lib/include under the release dir
+# so that `./z release` packages it via the inherited ZScript.release().
+PYTHON_OUT := $(OUT_DIR)/release/python-packages
 
 # ===========================================================================
 # Build Mode Variables
@@ -68,7 +81,7 @@ endif
 # Build Targets
 # ===========================================================================
 
-all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
+all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF) install
 
 $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
 	sh -c '\
@@ -114,6 +127,23 @@ $(TEST_ELF): $(TEST_SRC)
 	  -o $@
 
 # ===========================================================================
+# Install (stage artifacts into release/test output tree)
+# ===========================================================================
+
+install: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
+	@mkdir -p $(LIB_OUT) $(TEST_OUT) \
+	          $(PYTHON_OUT)/lxml/html \
+	          $(PYTHON_OUT)/lxml/isoschematron \
+	          $(PYTHON_OUT)/lxml/includes
+	cp -f $(STATICLIB_ETREE)       $(LIB_OUT)/
+	cp -f $(STATICLIB_ELEMENTPATH) $(LIB_OUT)/
+	cp -f $(TEST_ELF)              $(TEST_OUT)/
+	cp -f $(SRC_DIR)/src/lxml/*.py $(PYTHON_OUT)/lxml/
+	-cp -f $(SRC_DIR)/src/lxml/html/*.py          $(PYTHON_OUT)/lxml/html/          2>/dev/null || true
+	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py $(PYTHON_OUT)/lxml/isoschematron/ 2>/dev/null || true
+	-cp -rf $(SRC_DIR)/src/lxml/includes/*        $(PYTHON_OUT)/lxml/includes/      2>/dev/null || true
+
+# ===========================================================================
 # Test Targets
 # ===========================================================================
 
@@ -130,42 +160,10 @@ test:
 	@echo "  PASS: $(TEST_ELF) functional"
 
 # ===========================================================================
-# Package Target
-# ===========================================================================
-
-package:
-	@echo "=== Packaging lxml release ==="
-	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
-	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
-	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
-	rm -rf dist/$(ARTIFACT_NAME)
-	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
-	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html \
-	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron \
-	         dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes
-	cp -f $(STATICLIB_ETREE) dist/$(ARTIFACT_NAME)/sysroot/lib/
-	cp -f $(STATICLIB_ELEMENTPATH) dist/$(ARTIFACT_NAME)/sysroot/lib/
-	cp -f $(SRC_DIR)/src/lxml/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/
-	-cp -f $(SRC_DIR)/src/lxml/html/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/html/ 2>/dev/null || true
-	-cp -f $(SRC_DIR)/src/lxml/isoschematron/*.py dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/isoschematron/ 2>/dev/null || true
-	-cp -rf $(SRC_DIR)/src/lxml/includes/* dist/$(ARTIFACT_NAME)/sysroot/python-packages/lxml/includes/ 2>/dev/null || true
-	tar -czf dist/$(ARTIFACT_NAME).tar.gz -C dist/$(ARTIFACT_NAME) sysroot
-	@echo "  Package: dist/$(ARTIFACT_NAME).tar.gz"
-
-verify-package:
-	@echo "=== Verifying lxml package ==="
-	$(eval ARTIFACT_NAME := lxml-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
-	@test -f "dist/$(ARTIFACT_NAME).tar.gz" || { echo "  FAIL: tarball not found"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_etree.a' || { echo "  FAIL: missing liblxml_etree.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/lib/liblxml_elementpath.a' || { echo "  FAIL: missing liblxml_elementpath.a"; exit 1; }
-	@tar tzf "dist/$(ARTIFACT_NAME).tar.gz" | grep -q 'sysroot/python-packages/lxml/' || { echo "  FAIL: missing python-packages"; exit 1; }
-	@echo "  PASS: lxml package verification"
-
-# ===========================================================================
 # Clean
 # ===========================================================================
 
 clean:
-	rm -rf dist/ $(TEST_ELF)
+	rm -rf $(OUT_DIR) dist/ $(TEST_ELF)
 
-.PHONY: all clean test package verify-package
+.PHONY: all install clean test
