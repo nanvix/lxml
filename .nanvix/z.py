@@ -24,6 +24,16 @@ from nanvix_zutil import (
     make_initrd,
     run,
 )
+from nanvix_zutil.paths import (
+    buildroot,
+    dist_dir,
+    include_out,
+    lib_out,
+    nanvix_root,
+    out_dir,
+    repo_root,
+    test_out,
+)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -48,15 +58,30 @@ class LxmlBuild(ZScript):
         On Windows, the build runs in a container-local tmpfs (``/tmp/build``)
         to avoid VirtioFS I/O penalties.  Declare the artifacts produced by
         ``make all`` so they are copied back to the mounted workspace after
-        the inner command exits.
+        the inner command exits.  Only ``test_lxml.elf`` is load-bearing at
+        the repo root (resolved by ``make_initrd`` via ``repo_root()/app``);
+        install-staged artifacts for ``./z release`` are listed by
+        ``_staged_output_files()``.
         """
         cfg = super().docker_config(image)
-        cfg.output_files = [
-            "dist/obj/liblxml_etree.a",
-            "dist/obj/liblxml_elementpath.a",
-            "test_lxml.elf",
-        ]
+        cfg.output_files = ["test_lxml.elf"] + self._staged_output_files()
         return cfg
+
+    def _staged_output_files(self) -> list[str]:
+        """Return install-staged artifact paths (relative to repo_root())
+        so Windows tar-copy mode also copies them back to the host.
+        """
+        root = repo_root()
+        # PYTHON_OUT is derived in the Makefile as $(OUT_DIR)/release/python-packages.
+        python_out = out_dir() / "release" / "python-packages"
+        return [
+            str((lib_out() / "liblxml_etree.a").relative_to(root)),
+            str((lib_out() / "liblxml_elementpath.a").relative_to(root)),
+            str((test_out() / "test_lxml.elf").relative_to(root)),
+            # Python sources are globbed by the install rule; list the
+            # top-level marker so tar-copy round-trips the whole subtree.
+            str((python_out / "lxml").relative_to(root)),
+        ]
 
     def _make_args(self, *targets: str) -> list[str]:
         """Build the common make argument list."""
@@ -71,12 +96,11 @@ class LxmlBuild(ZScript):
         sysroot_p = (
             self.docker.translate_path(Path(sysroot)) if self.docker else Path(sysroot)
         )
-        buildroot_host = self.repo_root / ".nanvix" / "buildroot"
-        buildroot_p = (
-            self.docker.translate_path(buildroot_host)
-            if self.docker
-            else buildroot_host
-        )
+
+        def translate(p: Path):
+            return self.docker.translate_path(p) if self.docker else p
+
+        buildroot_p = translate(buildroot())
 
         args = [
             "make",
@@ -92,6 +116,12 @@ class LxmlBuild(ZScript):
                 f"{_MAKE_VAR_PLATFORM}={self.config.machine}",
                 f"{_MAKE_VAR_PROCESS_MODE}={self.config.deployment_mode}",
                 f"{_MAKE_VAR_MEMORY_SIZE}={self.config.memory_size}",
+                f"NANVIX_ROOT={translate(nanvix_root())}",
+                f"OUT_DIR={translate(out_dir())}",
+                f"DIST_DIR={translate(dist_dir())}",
+                f"LIB_OUT={translate(lib_out())}",
+                f"INCLUDE_OUT={translate(include_out())}",
+                f"TEST_OUT={translate(test_out())}",
             ]
         )
 
@@ -111,7 +141,7 @@ class LxmlBuild(ZScript):
 
     def build(self) -> None:
         """Cross-compile lxml C extensions for Nanvix."""
-        run(*self._make_args("all"), cwd=self.repo_root, docker=self.docker)
+        run(*self._make_args("all"), cwd=repo_root(), docker=self.docker)
 
     def test(self) -> None:
         """Run the lxml test suite.
@@ -131,7 +161,7 @@ class LxmlBuild(ZScript):
             targets = self.targets if self.targets else ["test"]
             run(
                 *self._make_args(*targets),
-                cwd=self.repo_root,
+                cwd=repo_root(),
             )
 
     def _run_functional_standalone(self) -> None:
@@ -140,7 +170,7 @@ class LxmlBuild(ZScript):
         Creates an initrd bundling test_lxml.elf with system daemons via
         make_initrd, and a ramfs providing /tmp for test I/O.
         """
-        test_elf = self.repo_root / "test_lxml.elf"
+        test_elf = repo_root() / "test_lxml.elf"
         if not test_elf.is_file():
             log.fatal(
                 "test_lxml.elf not found.",
@@ -155,7 +185,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd standalone...")
 
-        initrd = make_initrd(self, "test_lxml.elf")
+        initrd = make_initrd(self, "test_lxml.elf", test=True)
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -220,7 +250,7 @@ class LxmlBuild(ZScript):
                 hint="Run `./z setup` first.",
             )
 
-        test_elf = self.repo_root / "test_lxml.elf"
+        test_elf = repo_root() / "test_lxml.elf"
         if not test_elf.is_file():
             log.fatal(
                 "test_lxml.elf not found.",
@@ -231,7 +261,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd.exe standalone...")
 
-        initrd = make_initrd(self, "test_lxml.elf")
+        initrd = make_initrd(self, "test_lxml.elf", test=True)
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -267,11 +297,6 @@ class LxmlBuild(ZScript):
         print("  PASS: lxml functional tests")
         print("=== All lxml tests PASSED ===")
 
-    def release(self) -> None:
-        """Package the lxml release tarball and verify it."""
-        run(*self._make_args("package"), cwd=self.repo_root)
-        run(*self._make_args("verify-package"), cwd=self.repo_root)
-
     def clean(self) -> None:
         """Remove build artifacts."""
         run(
@@ -279,7 +304,7 @@ class LxmlBuild(ZScript):
             "-f",
             ".nanvix/Makefile.nanvix",
             "clean",
-            cwd=self.repo_root,
+            cwd=repo_root(),
         )
 
 
