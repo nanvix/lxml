@@ -120,6 +120,7 @@ $(TEST_ELF): $(TEST_SRC)
 	  -T$(SYSROOT_PATH)/lib/user.ld -static -Wl,-z,noexecstack \
 	  -lxslt -lxml2 -lz \
 	  -Wl,--start-group \
+	  $(SYSROOT_PATH)/lib/libnvx_crt0.a \
 	  $(SYSROOT_PATH)/lib/libposix.a \
 	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a \
 	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a \
