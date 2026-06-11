@@ -118,8 +118,10 @@ $(TEST_ELF): $(TEST_SRC)
 	  $(TEST_SRC) \
 	  -L$(BUILDROOT_PATH)/lib -L$(SYSROOT_PATH)/lib \
 	  -T$(SYSROOT_PATH)/lib/user.ld -static -Wl,-z,noexecstack \
+	  -Wl,--allow-multiple-definition \
 	  -lxslt -lxml2 -lz \
 	  -Wl,--start-group \
+	  $(SYSROOT_PATH)/lib/libnvx_crt0.a \
 	  $(SYSROOT_PATH)/lib/libposix.a \
 	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a \
 	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a \
