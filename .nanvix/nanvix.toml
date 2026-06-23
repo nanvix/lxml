@@ -1,7 +1,7 @@
 [package]
 name = "lxml"
 version = "5.3.0"
-nanvix-version = "0.16.140"
+nanvix-version = "0.17.5"
 
 [builds]
 [builds.matrix]
