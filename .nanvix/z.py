@@ -11,6 +11,7 @@ Usage:
     ./z clean     # Remove build artifacts
 """
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -250,8 +251,14 @@ class LxmlBuild(ZScript):
                 hint="Run `./z setup` first.",
             )
 
-        test_elf = repo_root() / "test_lxml.elf"
-        if not test_elf.is_file():
+        test_elf: Path | None = None
+        # test_out() is the windows-test artifact overlay.
+        for candidate in (test_out(), repo_root()):
+            p = candidate / "test_lxml.elf"
+            if p.is_file():
+                test_elf = p
+                break
+        if test_elf is None:
             log.fatal(
                 "test_lxml.elf not found.",
                 code=EXIT_MISSING_DEP,
@@ -261,7 +268,14 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd.exe standalone...")
 
-        initrd = make_initrd(self, "test_lxml.elf", test=True)
+        # make_initrd resolves binaries via repo_root()/app; stage if absent.
+        repo_elf = repo_root() / "test_lxml.elf"
+        preexisted = repo_elf.exists()
+        if test_elf.resolve() != repo_elf.resolve():
+            shutil.copy2(test_elf, repo_elf)
+        staged_created = not preexisted
+
+        initrd = make_initrd(self, repo_elf.name, test=True)
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -292,6 +306,8 @@ class LxmlBuild(ZScript):
         finally:
             if initrd.exists():
                 initrd.unlink()
+            if staged_created and repo_elf.exists():
+                repo_elf.unlink()
 
         print("  PASS: test_lxml standalone")
         print("  PASS: lxml functional tests")
