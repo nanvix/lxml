@@ -11,7 +11,6 @@ Usage:
     ./z clean     # Remove build artifacts
 """
 
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -59,10 +58,9 @@ class LxmlBuild(ZScript):
         On Windows, the build runs in a container-local tmpfs (``/tmp/build``)
         to avoid VirtioFS I/O penalties.  Declare the artifacts produced by
         ``make all`` so they are copied back to the mounted workspace after
-        the inner command exits.  Only ``test_lxml.elf`` is load-bearing at
-        the repo root (resolved by ``make_initrd`` via ``repo_root()/app``);
-        install-staged artifacts for ``./z release`` are listed by
-        ``_staged_output_files()``.
+        the inner command exits.  ``test_lxml.elf`` is consumed by the
+        standalone Linux test from the repo root; install-staged artifacts
+        for ``./z release`` are listed by ``_staged_output_files()``.
         """
         cfg = super().docker_config(image)
         cfg.output_files = ["test_lxml.elf"] + self._staged_output_files()
@@ -186,7 +184,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd standalone...")
 
-        initrd = make_initrd(self, "test_lxml.elf", test=True)
+        initrd = make_initrd(self, test_elf, test_out())
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -268,14 +266,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd.exe standalone...")
 
-        # make_initrd resolves binaries via repo_root()/app; stage if absent.
-        repo_elf = repo_root() / "test_lxml.elf"
-        preexisted = repo_elf.exists()
-        if test_elf.resolve() != repo_elf.resolve():
-            shutil.copy2(test_elf, repo_elf)
-        staged_created = not preexisted
-
-        initrd = make_initrd(self, repo_elf.name, test=True)
+        initrd = make_initrd(self, test_elf, test_out())
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -306,8 +297,6 @@ class LxmlBuild(ZScript):
         finally:
             if initrd.exists():
                 initrd.unlink()
-            if staged_created and repo_elf.exists():
-                repo_elf.unlink()
 
         print("  PASS: test_lxml standalone")
         print("  PASS: lxml functional tests")
