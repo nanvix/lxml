@@ -146,22 +146,14 @@ class LxmlBuild(ZScript):
         """Run the lxml test suite.
 
         Only functional tests are supported; they cover all test cases.
-        In standalone mode (Linux or Windows), the test is run in Python
-        via make_initrd so initrd creation is shared across platforms.
-        Other deployment modes are delegated to the Makefile.
+        The test is run in Python via make_initrd so initrd creation is
+        shared across platforms (Linux and Windows).
         """
         if IS_WINDOWS:
             self._run_tests_windows()
             return
 
-        if self.config.deployment_mode == "standalone":
-            self._run_functional_standalone()
-        else:
-            targets = self.targets if self.targets else ["test"]
-            run(
-                *self._make_args(*targets),
-                cwd=repo_root(),
-            )
+        self._run_functional_standalone()
 
     def _run_functional_standalone(self) -> None:
         """Run standalone functional tests using make_initrd.
@@ -223,15 +215,8 @@ class LxmlBuild(ZScript):
         """Run tests natively on Windows via nanvixd.exe.
 
         Uses make_initrd to bundle test_lxml.elf with system daemons,
-        and a ramfs for test I/O files. Only standalone mode is
-        supported on Windows.
+        and a ramfs for test I/O files.
         """
-        if self.config.deployment_mode != "standalone":
-            print(
-                f"Skipping tests on Windows for mode '{self.config.deployment_mode}' (requires linuxd)."
-            )
-            return
-
         sysroot = self._get_sysroot()
         sysroot_path = Path(sysroot)
         nanvixd = sysroot_path / "bin" / "nanvixd.exe"
