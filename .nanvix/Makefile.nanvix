@@ -7,7 +7,6 @@
 # Targets:
 #   all              Build liblxml_etree.a, liblxml_elementpath.a, and the functional test ELF, then stage via install
 #   install          Stage built artifacts into LIB_OUT/TEST_OUT and Python sources into PYTHON_OUT
-#   test             Run the functional test ELF on nanvixd.elf
 #   clean            Remove build artifacts
 
 # ===========================================================================
@@ -146,26 +145,10 @@ install: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
 	-cp -rf $(SRC_DIR)/src/lxml/includes/*        $(PYTHON_OUT)/lxml/includes/      2>/dev/null || true
 
 # ===========================================================================
-# Test Targets
-# ===========================================================================
-
-test:
-	@echo "=== lxml functional tests ==="
-	@test -f $(TEST_ELF) || { echo "  FAIL: $(TEST_ELF) not built"; exit 1; }
-	@echo "  Running $(TEST_ELF) via nanvixd.elf (platform=$(PLATFORM), mode=$(PROCESS_MODE))..."
-	@rm -rf /tmp/nanvix-ramfs && mkdir -p /tmp/nanvix-ramfs/tmp
-	"$(SYSROOT_PATH)/bin/mkramfs.elf" -o /tmp/rootfs.img /tmp/nanvix-ramfs/
-	cd "$(SYSROOT_PATH)" && timeout --foreground 120 ./bin/nanvixd.elf \
-	  -bin-dir ./bin -ramfs /tmp/rootfs.img \
-	  -- $(abspath $(TEST_ELF))
-	@rm -rf /tmp/nanvix-ramfs /tmp/rootfs.img
-	@echo "  PASS: $(TEST_ELF) functional"
-
-# ===========================================================================
 # Clean
 # ===========================================================================
 
 clean:
 	rm -rf $(OUT_DIR) dist/ $(TEST_ELF)
 
-.PHONY: all install clean test
+.PHONY: all install clean

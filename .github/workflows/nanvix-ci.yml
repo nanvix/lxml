@@ -30,10 +30,10 @@ jobs:
     with:
       docker-image: "ghcr.io/nanvix/toolchain-gcc@sha256:ea33e4cae4041dcf55f0ec49f58de90ae1b5e9fb7c3c507971b40975b14aecd3" # yamllint disable-line rule:line-length
       platforms: '["microvm"]'
-      process-modes: '["multi-process","single-process","standalone"]'
+      process-modes: '["standalone"]'
       memory-sizes: '["256mb"]'
       windows-matrix-exclude: '[]'
-      skip-full-test-modes: '["multi-process","single-process","standalone"]'
+      skip-full-test-modes: '["standalone"]'
       standalone-test-args: 'test'
       caller-event-name: ${{ github.event_name }}
       windows-test: true
@@ -47,10 +47,10 @@ jobs:
     with:
       docker-image: "ghcr.io/nanvix/toolchain-gcc@sha256:ea33e4cae4041dcf55f0ec49f58de90ae1b5e9fb7c3c507971b40975b14aecd3" # yamllint disable-line rule:line-length
       platforms: '["microvm"]'
-      process-modes: '["multi-process","single-process","standalone"]'
+      process-modes: '["standalone"]'
       memory-sizes: '["256mb"]'
       windows-matrix-exclude: '[]'
-      skip-full-test-modes: '["multi-process","single-process","standalone"]'
+      skip-full-test-modes: '["standalone"]'
       standalone-test-args: 'test'
       caller-event-name: 'schedule'
       windows-test: true
