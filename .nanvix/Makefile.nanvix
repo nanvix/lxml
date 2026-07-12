@@ -15,7 +15,7 @@
 
 # Some assumptions:
 # 1. This makefile is expected to be invoked via z.py.
-# 2. Build goals (all, install) require the cross-toolchain at
+# 2. Build goals (all, install) require the Nanvix SDK at
 #    $(NANVIX_TOOLCHAIN); other goals (test-*, clean) are pure host-side.
 # 3. Build ALWAYS runs before test and release.
 # 4. The buildroot (libxml2, libxslt, zlib, cpython headers) is laid down
@@ -71,60 +71,68 @@ ifneq ($(_BUILD),)
     $(error Cannot mix build and non-build targets. Build targets: $(_NANVIX_DOCKER_BUILD_GOALS))
   endif
 
-  ifeq ($(wildcard $(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc),)
-    $(error Nanvix toolchain not found at $(NANVIX_TOOLCHAIN))
+  ifeq ($(wildcard $(NANVIX_TOOLCHAIN)/nanvix-sdk.json),)
+    $(error Nanvix SDK not found at $(NANVIX_TOOLCHAIN))
+  endif
+  ifeq ($(wildcard $(NANVIX_TOOLCHAIN)/bin/clang),)
+    $(error Nanvix SDK Clang not found at $(NANVIX_TOOLCHAIN)/bin/clang)
   endif
 endif
+
+CC         := $(NANVIX_TOOLCHAIN)/bin/clang
+AR         := $(NANVIX_TOOLCHAIN)/bin/llvm-ar
+RANLIB     := $(NANVIX_TOOLCHAIN)/bin/llvm-ranlib
+PKG_CONFIG ?= pkgconf
+PKG_CONFIG_ENV := PKG_CONFIG_PATH=$(BUILDROOT_PATH)/lib/pkgconfig
+XML_CFLAGS := $(shell $(PKG_CONFIG_ENV) $(PKG_CONFIG) --cflags libxslt 2>/dev/null)
+XML_LIBS   := $(shell $(PKG_CONFIG_ENV) $(PKG_CONFIG) --static --libs libxslt 2>/dev/null)
+
+TARGET_CFLAGS := -Os -fdata-sections -ffunction-sections
+TARGET_CPPFLAGS := \
+	-I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
+	$(XML_CFLAGS) \
+	-I$(SRC_DIR)/src \
+	-I$(SRC_DIR)/src/lxml/includes
 
 # ===========================================================================
 # Build Targets
 # ===========================================================================
 
-all: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF) install
+all: check-deps $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF) install
 
-$(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH):
-	sh -c '\
-	  export PATH="$(NANVIX_TOOLCHAIN)/bin:$$PATH" && \
-	  mkdir -p dist/obj && \
-	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
-	    -I$(BUILDROOT_PATH)/include \
-	    -I$(BUILDROOT_PATH)/include/libxml2 \
-	    -I$(SYSROOT_PATH)/include \
-	    -I$(SRC_DIR)/src \
-	    -I$(SRC_DIR)/src/lxml/includes \
-	    -c $(SRC_DIR)/src/lxml/etree.c -o dist/obj/lxml_etree.o && \
-	  i686-nanvix-gcc -m32 -march=pentiumpro -Os -fdata-sections -ffunction-sections \
-	    -I$(SRC_DIR)/.nanvix/nanvix-port/cpython-headers \
-	    -I$(BUILDROOT_PATH)/include \
-	    -I$(BUILDROOT_PATH)/include/libxml2 \
-	    -I$(SYSROOT_PATH)/include \
-	    -I$(SRC_DIR)/src \
-	    -I$(SRC_DIR)/src/lxml/includes \
-	    -c $(SRC_DIR)/src/lxml/_elementpath.c -o dist/obj/lxml_elementpath.o && \
-	  i686-nanvix-ar rcs dist/obj/liblxml_etree.a dist/obj/lxml_etree.o && \
-	  i686-nanvix-ar rcs dist/obj/liblxml_elementpath.a dist/obj/lxml_elementpath.o && \
-	  i686-nanvix-ranlib dist/obj/liblxml_etree.a && \
-	  i686-nanvix-ranlib dist/obj/liblxml_elementpath.a'
+check-deps:
+	@test -f $(BUILDROOT_PATH)/lib/libz.a
+	@test -f $(BUILDROOT_PATH)/lib/libxml2.a
+	@test -f $(BUILDROOT_PATH)/lib/libxslt.a
+	@$(PKG_CONFIG_ENV) $(PKG_CONFIG) --exact-version=2.12.9 libxml-2.0
+	@$(PKG_CONFIG_ENV) $(PKG_CONFIG) --exact-version=1.1.42 libxslt
+	@test "$$(realpath "$$($(PKG_CONFIG_ENV) $(PKG_CONFIG) --variable=prefix libxml-2.0)")" = "$(BUILDROOT_PATH)"
+	@test "$$(realpath "$$($(PKG_CONFIG_ENV) $(PKG_CONFIG) --variable=prefix libxslt)")" = "$(BUILDROOT_PATH)"
 
-$(TEST_ELF): $(TEST_SRC)
+dist/obj/lxml_etree.o: $(SRC_DIR)/src/lxml/etree.c | check-deps
+	@mkdir -p $(@D)
+	$(CC) $(TARGET_CFLAGS) $(TARGET_CPPFLAGS) -c $< -o $@
+
+dist/obj/lxml_elementpath.o: $(SRC_DIR)/src/lxml/_elementpath.c | check-deps
+	@mkdir -p $(@D)
+	$(CC) $(TARGET_CFLAGS) $(TARGET_CPPFLAGS) -c $< -o $@
+
+$(STATICLIB_ETREE): dist/obj/lxml_etree.o
+	$(AR) rcs $@ $<
+	$(RANLIB) $@
+
+$(STATICLIB_ELEMENTPATH): dist/obj/lxml_elementpath.o
+	$(AR) rcs $@ $<
+	$(RANLIB) $@
+
+$(TEST_ELF): $(TEST_SRC) | check-deps
 	@test -f $(STATICLIB_ETREE) || { echo "  FAIL: $(STATICLIB_ETREE) not found; run 'build' first"; exit 1; }
 	@test -f $(STATICLIB_ELEMENTPATH) || { echo "  FAIL: $(STATICLIB_ELEMENTPATH) not found; run 'build' first"; exit 1; }
-	$(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc \
-	  -I$(BUILDROOT_PATH)/include/libxml2 \
-	  -I$(BUILDROOT_PATH)/include \
-	  -I$(SYSROOT_PATH)/include \
+	$(CC) \
+	  $(XML_CFLAGS) \
 	  $(TEST_SRC) \
-	  -L$(BUILDROOT_PATH)/lib -L$(SYSROOT_PATH)/lib \
-	  -T$(SYSROOT_PATH)/lib/user.ld -static -Wl,-z,noexecstack \
-	  -Wl,--allow-multiple-definition \
-	  -lxslt -lxml2 -lz \
-	  -Wl,--start-group \
-	  $(SYSROOT_PATH)/lib/libnvx_crt0.a \
-	  $(SYSROOT_PATH)/lib/libposix.a \
-	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a \
-	  $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a \
-	  -Wl,--end-group \
+	  $(XML_LIBS) \
+	  -Wl,-z,noexecstack \
 	  -o $@
 
 # ===========================================================================
@@ -151,4 +159,4 @@ install: $(STATICLIB_ETREE) $(STATICLIB_ELEMENTPATH) $(TEST_ELF)
 clean:
 	rm -rf $(OUT_DIR) dist/ $(TEST_ELF)
 
-.PHONY: all install clean
+.PHONY: all check-deps install clean
