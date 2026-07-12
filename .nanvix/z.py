@@ -11,8 +11,11 @@ Usage:
     ./z clean     # Remove build artifacts
 """
 
+import shutil
 import sys
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 from nanvix_zutil import (
@@ -37,6 +40,16 @@ from nanvix_zutil.paths import (
 
 IS_WINDOWS = sys.platform == "win32"
 
+NANVIX_DOCKER_IMAGE = (
+    "ghcr.io/nanvix/nanvix-sdk-c-clang"
+    "@sha256:f61737cb0780e6a2058c6d0bdf8ae5562db18de437173b2bcbbe6973abd3689f"
+)
+
+_DEPENDENCY_METADATA = {
+    "libxml2": ("libxml-2.0.pc",),
+    "libxslt": ("libxslt.pc", "libexslt.pc"),
+}
+
 _MAKE_VAR_HOME = "NANVIX_HOME"
 _MAKE_VAR_TOOLCHAIN = "NANVIX_TOOLCHAIN"
 _MAKE_VAR_BUILDROOT = "BUILDROOT_PATH"
@@ -48,9 +61,83 @@ _MAKE_VAR_MEMORY_SIZE = "MEMORY_SIZE"
 class LxmlBuild(ZScript):
     """Build script for nanvix/lxml."""
 
+    # Build-time headers, libraries, startup objects, and linker scripts come
+    # from the SDK and buildroot. The downloaded sysroot runs tests only.
+    SYSROOT_REQUIRED_FILES = (
+        "bin/nanvixd.elf",
+        "bin/kernel.elf",
+        "bin/mkramfs.elf",
+    )
+    SYSROOT_REQUIRED_FILES_WINDOWS = (
+        "bin/nanvixd.exe",
+        "bin/kernel.elf",
+        "bin/mkramfs.exe",
+    )
+
     def docker_image(self) -> str:
         """Return the Docker image for cross-compilation."""
-        return "ghcr.io/nanvix/toolchain-gcc"
+        return NANVIX_DOCKER_IMAGE
+
+    def setup(self) -> bool:
+        """Install the runtime sysroot and exact build dependency metadata."""
+        degraded = super().setup()
+        self._install_dependency_metadata()
+        return degraded
+
+    def _install_dependency_metadata(self) -> None:
+        """Install relocatable pkg-config files omitted by zutils v0.14.0."""
+        cache = nanvix_root() / "cache"
+        metadata_out = buildroot() / "lib" / "pkgconfig"
+        metadata_out.mkdir(parents=True, exist_ok=True)
+
+        for dependency, filenames in _DEPENDENCY_METADATA.items():
+            archives = sorted(
+                path for path in cache.glob(f"{dependency}-*") if path.is_file()
+            )
+            if not archives:
+                log.fatal(
+                    f"Cached release archive for {dependency} not found.",
+                    code=EXIT_MISSING_DEP,
+                    hint="Run `./z distclean` and then `./z setup`.",
+                )
+            archive = archives[-1]
+            for filename in filenames:
+                destination = metadata_out / filename
+                destination.unlink(missing_ok=True)
+                if zipfile.is_zipfile(archive):
+                    with zipfile.ZipFile(archive) as zf:
+                        member = next(
+                            (
+                                name
+                                for name in zf.namelist()
+                                if Path(name).name == filename
+                            ),
+                            None,
+                        )
+                        if member is not None:
+                            with zf.open(member) as src, destination.open("wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                else:
+                    with tarfile.open(archive, "r:*") as tf:
+                        member = next(
+                            (
+                                item
+                                for item in tf.getmembers()
+                                if item.isfile() and Path(item.name).name == filename
+                            ),
+                            None,
+                        )
+                        if member is not None:
+                            src = tf.extractfile(member)
+                            if src is not None:
+                                with src, destination.open("wb") as dst:
+                                    shutil.copyfileobj(src, dst)
+                if not destination.is_file():
+                    log.fatal(
+                        f"{filename} not found in {archive.name}.",
+                        code=EXIT_MISSING_DEP,
+                        hint="Use the SDK-built dependency release for Nanvix 0.20.0.",
+                    )
 
     def docker_config(self, image: str):
         """Configure Docker with output files copied back to the workspace.
