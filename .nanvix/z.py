@@ -40,11 +40,6 @@ from nanvix_zutil.paths import (
 
 IS_WINDOWS = sys.platform == "win32"
 
-NANVIX_DOCKER_IMAGE = (
-    "ghcr.io/nanvix/nanvix-sdk-c-clang"
-    "@sha256:f61737cb0780e6a2058c6d0bdf8ae5562db18de437173b2bcbbe6973abd3689f"
-)
-
 _DEPENDENCY_METADATA = {
     "libxml2": ("libxml-2.0.pc",),
     "libxslt": ("libxslt.pc", "libexslt.pc"),
@@ -73,10 +68,6 @@ class LxmlBuild(ZScript):
         "bin/kernel.elf",
         "bin/mkramfs.exe",
     )
-
-    def docker_image(self) -> str:
-        """Return the Docker image for cross-compilation."""
-        return NANVIX_DOCKER_IMAGE
 
     def setup(self) -> bool:
         """Install the runtime sysroot and exact build dependency metadata."""
