@@ -45,7 +45,8 @@ _REQUIRED := PLATFORM \
     DIST_DIR \
     LIB_OUT \
     INCLUDE_OUT \
-    TEST_OUT
+    TEST_OUT \
+    PYTHON_OUT
 ifneq ($(filter-out clean,$(_NANVIX_GOALS)),)
   $(foreach v,$(_REQUIRED),\
     $(if $($v),,$(error Required variable $v not set))\
@@ -56,9 +57,9 @@ SYSROOT_PATH   := $(abspath $(NANVIX_HOME))
 BUILDROOT_PATH := $(abspath $(CURDIR)/.nanvix/buildroot)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 
-# Python source tree is staged alongside lib/include under the release dir
-# so that `./z release` packages it via the inherited ZScript.release().
-PYTHON_OUT := $(OUT_DIR)/release/python-packages
+# PYTHON_OUT is provided by z.py (staged under dev_out() so
+# `./z release` packages the Python subtree into the -dev archive
+# alongside lib/).
 
 # ===========================================================================
 # Build Mode Variables

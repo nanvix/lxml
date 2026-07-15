@@ -29,9 +29,8 @@ from nanvix_zutil import (
 )
 from nanvix_zutil.paths import (
     buildroot,
+    dev_out,
     dist_dir,
-    include_out,
-    lib_out,
     nanvix_root,
     out_dir,
     repo_root,
@@ -149,11 +148,11 @@ class LxmlBuild(ZScript):
         so Windows tar-copy mode also copies them back to the host.
         """
         root = repo_root()
-        # PYTHON_OUT is derived in the Makefile as $(OUT_DIR)/release/python-packages.
-        python_out = out_dir() / "release" / "python-packages"
+        lib = dev_out() / "lib"
+        python_out = dev_out() / "python-packages"
         return [
-            str((lib_out() / "liblxml_etree.a").relative_to(root)),
-            str((lib_out() / "liblxml_elementpath.a").relative_to(root)),
+            str((lib / "liblxml_etree.a").relative_to(root)),
+            str((lib / "liblxml_elementpath.a").relative_to(root)),
             str((test_out() / "test_lxml.elf").relative_to(root)),
             # Python sources are globbed by the install rule; list the
             # top-level marker so tar-copy round-trips the whole subtree.
@@ -196,9 +195,10 @@ class LxmlBuild(ZScript):
                 f"NANVIX_ROOT={translate(nanvix_root())}",
                 f"OUT_DIR={translate(out_dir())}",
                 f"DIST_DIR={translate(dist_dir())}",
-                f"LIB_OUT={translate(lib_out())}",
-                f"INCLUDE_OUT={translate(include_out())}",
+                f"LIB_OUT={translate(dev_out() / 'lib')}",
+                f"INCLUDE_OUT={translate(dev_out() / 'include')}",
                 f"TEST_OUT={translate(test_out())}",
+                f"PYTHON_OUT={translate(dev_out() / 'python-packages')}",
             ]
         )
 
