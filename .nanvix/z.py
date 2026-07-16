@@ -254,7 +254,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd standalone...")
 
-        initrd = make_initrd(self, test_elf, test_out())
+        initrd = make_initrd(test_elf, test_out())
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
@@ -329,7 +329,7 @@ class LxmlBuild(ZScript):
         print("=== lxml functional tests ===")
         print("  Running test_lxml.elf via nanvixd.exe standalone...")
 
-        initrd = make_initrd(self, test_elf, test_out())
+        initrd = make_initrd(test_elf, test_out())
 
         try:
             with tempfile.TemporaryDirectory(prefix="nanvix_lxml_") as tmpdir:
