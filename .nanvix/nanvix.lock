@@ -2,7 +2,7 @@
 
 [metadata]
 manifest-hash = "sha256:aa4b59a8d0cd40185ddaffa20a27474fd8d2765ada99c7c32fbd773cd796fb62"
-nanvix-zutil-version = "0.17.0"
+nanvix-zutil-version = "0.16.3"
 
 [metadata.sdk]
 schema-version = 1
@@ -136,7 +136,7 @@ ref-kind = "version"
 ref-value = "1.1.42-nanvix-0.20.9-sdk.1"
 resolved-tag = "1.1.42-nanvix-0.20.9-sdk.1"
 resolved-commitish = "nanvix/v1.1.42"
-release-id = 354645058
+release-id = 354653236
 dependencies = [
     "libxml2",
     "zlib",
@@ -145,19 +145,9 @@ dependencies = [
 [[package.assets]]
 name = "libxslt-linux-x86-microvm-standalone-256mb-dev.tar.gz"
 url = "https://github.com/nanvix/libxslt/releases/download/1.1.42-nanvix-0.20.9-sdk.1/libxslt-linux-x86-microvm-standalone-256mb-dev.tar.gz"
-id = 478270240
-
-[[package.assets]]
-name = "libxslt-linux-x86-microvm-standalone-256mb.tar.gz"
-url = "https://github.com/nanvix/libxslt/releases/download/1.1.42-nanvix-0.20.9-sdk.1/libxslt-linux-x86-microvm-standalone-256mb.tar.gz"
-id = 478270244
+id = 478283663
 
 [[package.assets]]
 name = "libxslt-windows-x86-microvm-standalone-256mb-dev.zip"
 url = "https://github.com/nanvix/libxslt/releases/download/1.1.42-nanvix-0.20.9-sdk.1/libxslt-windows-x86-microvm-standalone-256mb-dev.zip"
-id = 478270243
-
-[[package.assets]]
-name = "libxslt-windows-x86-microvm-standalone-256mb.zip"
-url = "https://github.com/nanvix/libxslt/releases/download/1.1.42-nanvix-0.20.9-sdk.1/libxslt-windows-x86-microvm-standalone-256mb.zip"
-id = 478270241
+id = 478283666
