@@ -28,12 +28,12 @@ from nanvix_zutil import (
     run,
 )
 from nanvix_zutil.paths import (
-    buildroot,
     dev_out,
     dist_dir,
     nanvix_root,
     out_dir,
     repo_root,
+    sysroot as sysroot_dir,
     test_out,
 )
 
@@ -56,7 +56,7 @@ class LxmlBuild(ZScript):
     """Build script for nanvix/lxml."""
 
     # Build-time headers, libraries, startup objects, and linker scripts come
-    # from the SDK and buildroot. The downloaded sysroot runs tests only.
+    # from the SDK and sysroot.
     SYSROOT_REQUIRED_FILES = (
         "bin/nanvixd.elf",
         "bin/kernel.elf",
@@ -77,7 +77,7 @@ class LxmlBuild(ZScript):
     def _install_dependency_metadata(self) -> None:
         """Install relocatable pkg-config files omitted by zutils v0.14.0."""
         cache = nanvix_root() / "cache"
-        metadata_out = buildroot() / "lib" / "pkgconfig"
+        metadata_out = sysroot_dir() / "lib" / "pkgconfig"
         metadata_out.mkdir(parents=True, exist_ok=True)
 
         for dependency, filenames in _DEPENDENCY_METADATA.items():
@@ -176,7 +176,7 @@ class LxmlBuild(ZScript):
         def translate(p: Path):
             return self.docker.translate_path(p) if self.docker else p
 
-        buildroot_p = translate(buildroot())
+        buildroot_p = sysroot_p
 
         args = [
             "make",
