@@ -22,6 +22,7 @@ from nanvix_zutil import (
     CFG_SYSROOT,
     EXIT_MISSING_DEP,
     TOOLCHAIN_CONTAINER_PATH,
+    DockerConfig,
     ZScript,
     log,
     make_initrd,
@@ -130,20 +131,6 @@ class LxmlBuild(ZScript):
                         hint="Use the SDK-built dependency release for Nanvix 0.20.0.",
                     )
 
-    def docker_config(self, image: str):
-        """Configure Docker with output files copied back to the workspace.
-
-        On Windows, the build runs in a container-local tmpfs (``/tmp/build``)
-        to avoid VirtioFS I/O penalties.  Declare the artifacts produced by
-        ``make all`` so they are copied back to the mounted workspace after
-        the inner command exits.  ``test_lxml.elf`` is consumed by the
-        standalone Linux test from the repo root; install-staged artifacts
-        for ``./z release`` are listed by ``_staged_output_files()``.
-        """
-        cfg = super().docker_config(image)
-        cfg.output_files = ["test_lxml.elf"] + self._staged_output_files()
-        return cfg
-
     def _staged_output_files(self) -> list[str]:
         """Return install-staged artifact paths (relative to repo_root())
         so Windows tar-copy mode also copies them back to the host.
@@ -160,7 +147,7 @@ class LxmlBuild(ZScript):
             str((python_out / "lxml").relative_to(root)),
         ]
 
-    def _make_args(self, *targets: str) -> list[str]:
+    def _make_args(self, docker: DockerConfig | None, *targets: str) -> list[str]:
         """Build the common make argument list."""
         sysroot = self.config.get(CFG_SYSROOT, "")
         if not sysroot:
@@ -171,13 +158,11 @@ class LxmlBuild(ZScript):
             )
         toolchain_p = str(TOOLCHAIN_CONTAINER_PATH)
         sysroot_p = (
-            translate_path(self.docker.mounts, Path(sysroot))
-            if self.docker
-            else Path(sysroot)
+            translate_path(docker.mounts, Path(sysroot)) if docker else Path(sysroot)
         )
 
         def translate(p: Path):
-            return translate_path(self.docker.mounts, p) if self.docker else p
+            return translate_path(docker.mounts, p) if docker else p
 
         buildroot_p = sysroot_p
 
@@ -219,9 +204,10 @@ class LxmlBuild(ZScript):
             )
         return sysroot
 
-    def build(self) -> None:
+    def build(self, docker: DockerConfig) -> None:
         """Cross-compile lxml C extensions for Nanvix."""
-        run(*self._make_args("all"), cwd=repo_root(), docker=self.docker)
+        docker.output_files = ["test_lxml.elf"] + self._staged_output_files()
+        run(*self._make_args(docker, "all"), cwd=repo_root(), docker=docker)
 
     def test(self) -> None:
         """Run the lxml test suite.
